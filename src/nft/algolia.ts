@@ -72,6 +72,7 @@ async function algoliaWriteTokenHelper(args: {
     params.updated = Date.now();
     params.minaPublicKey = address;
     params.address = address;
+    params.owner = address;
     params.minaExplorer = explorerAccount;
     params.minaPublicKey = token.address;
 

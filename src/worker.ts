@@ -86,10 +86,10 @@ export class RollupWorker extends zkCloudWorker {
   static blockContractVerificationKey: VerificationKey | undefined = undefined;
   static validatorsVerificationKey: VerificationKey | undefined = undefined;
   readonly cache: Cache;
-  readonly MIN_TIME_BETWEEN_BLOCKS = 1000 * 60 * 1; // 2 minutes
+  readonly MIN_TIME_BETWEEN_BLOCKS = 1000 * 60 * 1; // 1 minutes
   readonly MAX_TIME_BETWEEN_BLOCKS = 1000 * 60 * 60; // 60 minutes
   readonly MIN_TRANSACTIONS = 1;
-  readonly MAX_TRANSACTIONS = 50;
+  readonly MAX_TRANSACTIONS = 5;
 
   constructor(cloud: Cloud) {
     super(cloud);
@@ -327,7 +327,15 @@ export class RollupWorker extends zkCloudWorker {
       case "rollupNFT":
         return JSON.stringify(await this.rollupNFT(transactions));
       case "processTransactions":
-        return await this.txTask(true);
+        let result = "error";
+        try {
+          result =
+            (await this.txTask(true)) ?? "error in processTransactions: txTask";
+        } catch (error) {
+          console.error("Error: catch: processTransactions: txTask", error);
+        }
+        await this.createTxTask();
+        return result;
       default:
         console.error("Unknown task in execute:", this.cloud.task);
         return "Unknown task in execute";
@@ -407,7 +415,6 @@ export class RollupWorker extends zkCloudWorker {
           transactions[0].timeReceived
         ).toLocaleString()}...`
       );
-      return "test";
       try {
         // TODO: Use processTransactions ???
         const result = await this.createRollupBlock(transactions);
@@ -1553,6 +1560,7 @@ export class RollupWorker extends zkCloudWorker {
     status: DomainCloudTransactionStatus;
     reason?: string;
   }> {
+    console.log("deserializeTransaction", tx);
     try {
       const operationType =
         tx.operation === "add"
@@ -1598,9 +1606,13 @@ export class RollupWorker extends zkCloudWorker {
           ) as Storage;
         }
       } else {
-        const nft: RollupNFTData = await createRollupNFT(tx);
-        metadata = nft.metadataRoot;
-        storage = nft.storage;
+        //const nft: RollupNFTData = await createRollupNFT(tx);
+        if (tx.metadata === undefined || tx.storage === undefined)
+          throw new Error("tx metadata or storage is undefined");
+        metadata = Metadata.fromFields(
+          deserializeFields(tx.metadata)
+        ) as Metadata;
+        storage = Storage.fromFields(deserializeFields(tx.storage)) as Storage;
       }
       if (metadata === undefined || storage === undefined)
         throw new Error("metadata or storage is undefined");
