@@ -4,6 +4,8 @@
 
 [B62qo2gLfhzbKpSQw3G7yQaajEJEmxovqm5MBRb774PdJUw6a7XnNFT](https://zekoscan.io/devnet/account/B62qo2gLfhzbKpSQw3G7yQaajEJEmxovqm5MBRb774PdJUw6a7XnNFT/txs?type=zk-acc)
 
+![Architecture](/docs/rollup.svg)
+
 ## Running tests
 
 Please create env.json using an example and run

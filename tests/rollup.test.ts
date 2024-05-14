@@ -57,7 +57,7 @@ import packageJson from "../package.json";
 const { name: repo, author: developer, version } = packageJson;
 
 setNumberOfWorkers(8);
-const chain: blockchain = "zeko" as blockchain;
+const chain: blockchain = "local" as blockchain;
 const deploy = true;
 const useLocalCloudWorker = true;
 const api = new zkCloudWorkerClient({
@@ -320,7 +320,6 @@ describe("Domain Name Service Contract", () => {
       //console.log("PINATA_JWT:", process.env.PINATA_JWT);
     });
   }
-  return;
 
   if (!deploy) {
     it.skip(`should restart the sequencer`, async () => {
