@@ -1606,13 +1606,18 @@ export class RollupWorker extends zkCloudWorker {
           ) as Storage;
         }
       } else {
-        //const nft: RollupNFTData = await createRollupNFT(tx);
-        if (tx.metadata === undefined || tx.storage === undefined)
-          throw new Error("tx metadata or storage is undefined");
-        metadata = Metadata.fromFields(
-          deserializeFields(tx.metadata)
-        ) as Metadata;
-        storage = Storage.fromFields(deserializeFields(tx.storage)) as Storage;
+        if (tx.metadata === undefined || tx.storage === undefined) {
+          const nft: RollupNFTData = await createRollupNFT(tx);
+          metadata = nft.metadataRoot;
+          storage = nft.storage;
+        } else {
+          metadata = Metadata.fromFields(
+            deserializeFields(tx.metadata)
+          ) as Metadata;
+          storage = Storage.fromFields(
+            deserializeFields(tx.storage)
+          ) as Storage;
+        }
       }
       if (metadata === undefined || storage === undefined)
         throw new Error("metadata or storage is undefined");
