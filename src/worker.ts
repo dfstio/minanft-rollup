@@ -100,54 +100,59 @@ export class RollupWorker extends zkCloudWorker {
   }
 
   private async compile(compileSmartContracts: boolean = true): Promise<void> {
-    const cpuCores = os.cpus();
-    const numberOfCPUCores = cpuCores.length;
-    console.log("CPU cores:", numberOfCPUCores);
-    console.time("compiled");
-    if (RollupWorker.mapUpdateVerificationKey === undefined) {
-      console.time("compiled MapUpdate");
-      RollupWorker.mapUpdateVerificationKey = (
-        await MapUpdate.compile({
-          cache: this.cache,
-        })
-      ).verificationKey;
-      console.timeEnd("compiled MapUpdate");
-    }
+    try {
+      console.log("Available parallelism:", os.availableParallelism());
+      console.time("compiled");
+      if (RollupWorker.mapUpdateVerificationKey === undefined) {
+        console.time("compiled MapUpdate");
+        RollupWorker.mapUpdateVerificationKey = (
+          await MapUpdate.compile({
+            cache: this.cache,
+          })
+        ).verificationKey;
+        console.timeEnd("compiled MapUpdate");
+      }
 
-    if (compileSmartContracts === false) {
+      if (compileSmartContracts === false) {
+        console.timeEnd("compiled");
+        return;
+      }
+
+      if (RollupWorker.blockContractVerificationKey === undefined) {
+        console.time("compiled BlockContract");
+        RollupWorker.blockContractVerificationKey = (
+          await BlockContract.compile({
+            cache: this.cache,
+          })
+        ).verificationKey;
+        console.timeEnd("compiled BlockContract");
+      }
+      if (RollupWorker.validatorsVerificationKey === undefined) {
+        console.time("compiled ValidatorsVoting");
+        RollupWorker.validatorsVerificationKey = (
+          await ValidatorsVoting.compile({
+            cache: this.cache,
+          })
+        ).verificationKey;
+        console.timeEnd("compiled ValidatorsVoting");
+      }
+
+      if (RollupWorker.contractVerificationKey === undefined) {
+        console.time("compiled RollupContract");
+        RollupWorker.contractVerificationKey = (
+          await RollupContract.compile({
+            cache: this.cache,
+          })
+        ).verificationKey;
+        console.timeEnd("compiled RollupContract");
+      }
       console.timeEnd("compiled");
-      return;
+    } catch (error) {
+      console.error("Error in compile, restarting container", error);
+      // Restarting the container, see https://github.com/o1-labs/o1js/issues/1651
+      await this.cloud.forceWorkerRestart();
+      throw error;
     }
-
-    if (RollupWorker.blockContractVerificationKey === undefined) {
-      console.time("compiled BlockContract");
-      RollupWorker.blockContractVerificationKey = (
-        await BlockContract.compile({
-          cache: this.cache,
-        })
-      ).verificationKey;
-      console.timeEnd("compiled BlockContract");
-    }
-    if (RollupWorker.validatorsVerificationKey === undefined) {
-      console.time("compiled ValidatorsVoting");
-      RollupWorker.validatorsVerificationKey = (
-        await ValidatorsVoting.compile({
-          cache: this.cache,
-        })
-      ).verificationKey;
-      console.timeEnd("compiled ValidatorsVoting");
-    }
-
-    if (RollupWorker.contractVerificationKey === undefined) {
-      console.time("compiled RollupContract");
-      RollupWorker.contractVerificationKey = (
-        await RollupContract.compile({
-          cache: this.cache,
-        })
-      ).verificationKey;
-      console.timeEnd("compiled RollupContract");
-    }
-    console.timeEnd("compiled");
   }
 
   public async create(transaction: string): Promise<string | undefined> {
