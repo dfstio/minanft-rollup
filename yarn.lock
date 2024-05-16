@@ -3497,20 +3497,20 @@ __metadata:
     algoliasearch: "npm:^4.23.3"
     axios: "npm:^1.6.8"
     jest: "npm:^29.7.0"
-    minanft: "npm:^1.11.2"
-    o1js: "npm:^1.1.0"
+    minanft: "npm:^1.11.3"
+    o1js: "npm:^1.2.0"
     remove-markdown: "npm:^0.5.0"
     ts-jest: "npm:^29.1.2"
     tslib: "npm:^2.6.2"
     typescript: "npm:^5.4.5"
     unique-names-generator: "npm:^4.7.1"
-    zkcloudworker: "npm:^0.7.11"
+    zkcloudworker: "npm:^0.8.0"
   languageName: unknown
   linkType: soft
 
-"minanft@npm:^1.11.2":
-  version: 1.11.2
-  resolution: "minanft@npm:1.11.2"
+"minanft@npm:^1.11.3":
+  version: 1.11.3
+  resolution: "minanft@npm:1.11.3"
   dependencies:
     arweave: "npm:^1.15.0"
     axios: "npm:^1.6.8"
@@ -3518,8 +3518,8 @@ __metadata:
     jimp: "npm:^0.22.12"
     mime: "npm:^3.0.0"
   peerDependencies:
-    o1js: ^1.1.0
-  checksum: 10c0/68d24ee5a9e315f7f8226ffe41cd29ddc227da2c1840880f99d6267d2ada065ae2c42344124d63c61fdadf2a884d79899d5afd2d140773e43cfd3ed862125464
+    o1js: ^1.2.0
+  checksum: 10c0/0255d14cf2997b79be5cb17776593127c2eb264e77e3beed93fe07fbb3e5e5e5fc3a4dfd8ffd75f7ca0e032b9a89aac02e08c29f19d0de1c30a3f3da67bfa78c
   languageName: node
   linkType: hard
 
@@ -3755,9 +3755,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"o1js@npm:^1.1.0":
-  version: 1.1.0
-  resolution: "o1js@npm:1.1.0"
+"o1js@npm:^1.2.0":
+  version: 1.2.0
+  resolution: "o1js@npm:1.2.0"
   dependencies:
     blakejs: "npm:1.2.1"
     cachedir: "npm:^2.4.0"
@@ -3767,7 +3767,7 @@ __metadata:
     tslib: "npm:^2.3.0"
   bin:
     snarky-run: src/build/run.js
-  checksum: 10c0/cac9302989290686e03231dec7e2879715dc593722296726f5c802a18180b8fce75b5fa23c3c651d89b6c1f3fa43275a3e9043f84d6871665942a3e54877c064
+  checksum: 10c0/facde84ceb1cde5871676503672ffb99fb1ea4f5c3ae678a5de2b618955291fe41d0a9197f3887670de523297cba6d86a1e8de39707f843e0c4cb426b647acba
   languageName: node
   linkType: hard
 
@@ -4877,15 +4877,15 @@ __metadata:
   languageName: node
   linkType: hard
 
-"zkcloudworker@npm:^0.7.11":
-  version: 0.7.11
-  resolution: "zkcloudworker@npm:0.7.11"
+"zkcloudworker@npm:^0.8.0":
+  version: 0.8.0
+  resolution: "zkcloudworker@npm:0.8.0"
   dependencies:
     axios: "npm:^1.6.8"
     chalk: "npm:^4.1.2"
     nats: "npm:^2.24.0"
   peerDependencies:
     o1js: ^1.1.0
-  checksum: 10c0/4527f7f393d7ce58bf9f761c712d9b39caf847ab3b0fb3256a21164657e4c8f5c8b5dfeed7de5f62c6be784d137764f60f8fe947465ce96acff0fc68c610bbb8
+  checksum: 10c0/7bd5a3b3fc780d85235513d22f9854261e1496bd58dd12a135c7db488cb6fe96bd5edde0b5e74fcbf38bd08418a797011cfd75b1b973a0c9e38bf821d5007f96
   languageName: node
   linkType: hard
