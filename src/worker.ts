@@ -10,6 +10,7 @@ import {
   accountBalanceMina,
   deserializeFields,
   serializeFields,
+  stringHash,
 } from "zkcloudworker";
 import os from "os";
 import assert from "node:assert/strict";
@@ -526,9 +527,11 @@ export class RollupWorker extends zkCloudWorker {
     }
   }
 
-  private async rollupNFT(
-    transactions: string[]
-  ): Promise<{ success: boolean; txId?: string[]; error?: string }> {
+  private async rollupNFT(transactions: string[]): Promise<{
+    success: boolean;
+    transactions?: CloudTransaction[];
+    error?: string;
+  }> {
     try {
       if (this.cloud.args === undefined) {
         console.error("getMetadata: args are undefined");
@@ -553,39 +556,76 @@ export class RollupWorker extends zkCloudWorker {
           error: "error: rollupNFT: contractAddress is invalid",
         };
       }
-      for (const transaction of transactions) {
-        const txParsed: DomainSerializedTransaction = JSON.parse(
-          transaction
-        ) as DomainSerializedTransaction;
-        const deserializedTransaction =
-          await RollupWorker.deserializeTransaction(txParsed);
-        if (
-          deserializedTransaction.status !== "pending" ||
-          deserializedTransaction.tx === undefined
-        ) {
-          console.error(
-            "Error in deserializing transaction:",
-            deserializedTransaction
-          );
-          return { success: false, error: "error: deserializing transaction" };
-        }
-        const success = await this.sendToAlgolia(
-          deserializedTransaction.tx,
-          contractAddress.toBase58()
+      const txs: CloudTransaction[] = [];
+      for (const tx of transactions) {
+        const timeReceived = Date.now();
+        const transaction =
+          tx !== undefined
+            ? typeof tx === "string"
+              ? tx
+              : "tx is not a string"
+            : "undefined tx";
+        const txId = stringHash(
+          JSON.stringify({ tx: transaction, time: timeReceived })
         );
-        if (!success) {
-          console.error("Error in sendToAlgolia");
-          return { success: false, error: "error: sendToAlgolia" };
+        if (transaction !== tx) {
+          console.error("Error in transaction", tx);
+          const ct: CloudTransaction = {
+            status: "invalid",
+            transaction,
+            txId,
+            timeReceived,
+          };
+          txs.push(ct);
+        }
+        try {
+          const txParsed: DomainSerializedTransaction = JSON.parse(
+            transaction
+          ) as DomainSerializedTransaction;
+          const deserializedTransaction =
+            await RollupWorker.deserializeTransaction(txParsed);
+          const ct: CloudTransaction = {
+            status: deserializedTransaction.status,
+            transaction,
+            txId,
+            timeReceived,
+          };
+          txs.push(ct);
+          if (
+            deserializedTransaction.status !== "pending" ||
+            deserializedTransaction.tx === undefined
+          ) {
+            console.error(
+              "Error in deserializing transaction:",
+              deserializedTransaction
+            );
+          } else {
+            const success = await this.sendToAlgolia(
+              deserializedTransaction.tx,
+              contractAddress.toBase58()
+            );
+            if (!success) {
+              console.error("Error in sendToAlgolia");
+            }
+          }
+        } catch (error) {
+          const tx: CloudTransaction = {
+            status: "invalid",
+            transaction,
+            txId,
+            timeReceived,
+          };
+          txs.push(tx);
         }
       }
-      const txId = await this.cloud.sendTransactions(transactions);
+      await this.cloud.sendTransactions(txs);
       await this.cloud.execute({
         transactions: [],
         task: "processTransactions",
         args: JSON.stringify({ contractAddress: contractAddress.toBase58() }),
         metadata: `rollupNFT with ${transactions.length} transactions`,
       });
-      return { success: true, txId };
+      return { success: true, transactions: txs };
     } catch (error) {
       console.error("Error in rollupNFT", error);
       return { success: false, error: "error in rollupNFT" };
@@ -1012,7 +1052,7 @@ export class RollupWorker extends zkCloudWorker {
       }
     );
 
-    await tx.prove();
+    await this.prove(tx);
     const txSent = await tx.sign([deployer]).safeSend();
     if (txSent.errors.length > 0) {
       console.error(
@@ -1489,7 +1529,7 @@ export class RollupWorker extends zkCloudWorker {
       }
     );
 
-    await tx.prove();
+    await this.prove(tx);
     const txSent = await tx.sign([deployer]).safeSend();
     if (txSent.errors.length > 0) {
       console.error(
@@ -2309,7 +2349,7 @@ export class RollupWorker extends zkCloudWorker {
 
     tx.sign([blockProducer.privateKey, blockPrivateKey]);
     try {
-      await tx.prove();
+      await this.prove(tx);
       console.timeEnd("prepared tx");
       const txSent = await tx.safeSend();
       console.log(
@@ -2415,5 +2455,16 @@ export class RollupWorker extends zkCloudWorker {
         force
       );
     return result;
+  }
+
+  private async prove(tx: Mina.Transaction<false, false>) {
+    try {
+      await tx.prove();
+      return tx;
+    } catch (error) {
+      console.error("Error in prove", error);
+      await this.cloud.forceWorkerRestart();
+      throw new Error("Error in prove");
+    }
   }
 }
