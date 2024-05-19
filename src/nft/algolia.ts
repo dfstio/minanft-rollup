@@ -1,7 +1,11 @@
 import algoliasearch from "algoliasearch";
 import removeMarkdown from "remove-markdown";
 import { MinaNFT } from "minanft";
+import { stringFromFields } from "../lib/hash";
 import { ALGOLIA_KEY, ALGOLIA_PROJECT } from "../../env.json";
+import { DomainTransaction } from "../rollup/transaction";
+import { blockchain } from "zkcloudworker";
+import { loadFromIPFS } from "../contract/storage";
 
 export async function algoliaWriteToken(params: {
   token: any;

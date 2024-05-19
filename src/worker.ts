@@ -77,6 +77,8 @@ import { nameContract } from "./config";
 import { RollupNFTData, createRollupNFT } from "./rollup/rollup-nft";
 import { Metadata } from "minanft";
 import { algoliaWriteToken } from "./nft/algolia";
+import { algoliaWriteBlock } from "./nft";
+import { write } from "fs";
 
 const fullValidation = true;
 const proofsOff = false as boolean;
@@ -157,141 +159,108 @@ export class RollupWorker extends zkCloudWorker {
   }
 
   public async create(transaction: string): Promise<string | undefined> {
-    const msg = `proof created with proofs ${
-      proofsOff === true ? "off" : "on"
-    }`;
-    console.time(msg);
-    const args = JSON.parse(transaction);
-    if (proofsOff === false) {
-      const state: MapTransition = MapTransition.fromFields(
-        deserializeFields(args.state)
-      ) as MapTransition;
-      // TODO: handle all operations
-      const isAccepted = args.isAccepted;
-      const updateType = args.type;
-      const signature = args.signature
-        ? (Signature.fromBase58(args.signature) as Signature)
-        : undefined;
-      const oldDomain = args.oldDomain
-        ? (RollupNftName.fromFields(
-            deserializeFields(args.oldDomain)
-          ) as RollupNftName)
-        : undefined;
-      const oldRoot = args.oldRoot ? Field.fromJSON(args.oldRoot) : undefined;
-      const time = args.time ? UInt64.from(BigInt(args.time)) : undefined;
-      const tx = args.tx
-        ? (DomainTransaction.fromFields(
-            deserializeFields(args.tx)
-          ) as DomainTransaction)
-        : undefined;
+    try {
+      const msg = `proof created with proofs ${
+        proofsOff === true ? "off" : "on"
+      }`;
+      console.time(msg);
+      const args = JSON.parse(transaction);
+      if (proofsOff === false) {
+        const state: MapTransition = MapTransition.fromFields(
+          deserializeFields(args.state)
+        ) as MapTransition;
+        // TODO: handle all operations
+        const isAccepted = args.isAccepted;
+        const updateType = args.type;
+        const signature = args.signature
+          ? (Signature.fromBase58(args.signature) as Signature)
+          : undefined;
+        const oldDomain = args.oldDomain
+          ? (RollupNftName.fromFields(
+              deserializeFields(args.oldDomain)
+            ) as RollupNftName)
+          : undefined;
+        const oldRoot = args.oldRoot ? Field.fromJSON(args.oldRoot) : undefined;
+        const time = args.time ? UInt64.from(BigInt(args.time)) : undefined;
+        const tx = args.tx
+          ? (DomainTransaction.fromFields(
+              deserializeFields(args.tx)
+            ) as DomainTransaction)
+          : undefined;
 
-      if (isAccepted === undefined) throw new Error("isAccepted is undefined");
-      if (updateType === undefined) throw new Error("updateType is undefined");
-      if (
-        updateType !== "add" &&
-        updateType !== "remove" &&
-        updateType !== "update" &&
-        updateType !== "extend"
-      )
-        throw new Error("updateType is invalid");
-
-      if (
-        isAccepted === false &&
-        (time === undefined || tx === undefined || oldRoot === undefined)
-      )
-        throw new Error("time, tx or oldRoot is undefined");
-
-      await this.compile(false);
-      if (RollupWorker.mapUpdateVerificationKey === undefined)
-        throw new Error("verificationKey is undefined");
-
-      let proof: MapUpdateProof;
-      if (isAccepted === true) {
-        if (
-          updateType === "update" &&
-          (oldDomain === undefined || signature === undefined)
-        )
-          throw new Error("oldDomain or signature is undefined");
-        if (updateType === "extend" && oldDomain === undefined)
-          throw new Error("oldDomain is undefined");
-
-        const update: MapUpdateData = MapUpdateData.fromFields(
-          deserializeFields(args.update)
-        ) as MapUpdateData;
-        if (update === undefined) throw new Error("update is undefined");
+        if (isAccepted === undefined)
+          throw new Error("isAccepted is undefined");
         if (updateType === undefined)
           throw new Error("updateType is undefined");
-        if (updateType === "add") {
-          proof = await MapUpdate.add(state, update);
-        } else if (updateType === "remove") {
-          proof = await MapUpdate.remove(state, update);
-        } else if (updateType === "update") {
-          if (update === undefined) throw new Error("update is undefined");
-          if (oldDomain === undefined)
-            throw new Error("oldDomain is undefined");
-          if (signature === undefined)
-            throw new Error("signature is undefined");
-          const txSignature: Signature = signature;
-          const txUpdate: MapUpdateData = update;
-          const txDomain: RollupNftName = oldDomain;
-          proof = await MapUpdate.update(
-            state,
-            txUpdate,
-            txDomain,
-            txSignature
-          );
-        } else if (updateType === "extend") {
-          if (update === undefined) throw new Error("update is undefined");
-          if (oldDomain === undefined)
-            throw new Error("oldDomain is undefined");
-          const txUpdate: MapUpdateData = update;
-          const txDomain: RollupNftName = oldDomain;
-          proof = await MapUpdate.extend(state, txUpdate, txDomain);
-        } else {
-          throw new Error("invalid updateType");
-        }
-      } else {
-        if (time === undefined || tx === undefined || oldRoot === undefined)
-          throw new Error("time, tx or oldRoot is undefined");
-        proof = await MapUpdate.reject(state, oldRoot, time, tx);
-      }
+        if (
+          updateType !== "add" &&
+          updateType !== "remove" &&
+          updateType !== "update" &&
+          updateType !== "extend"
+        )
+          throw new Error("updateType is invalid");
 
-      const ok = await verify(
-        proof.toJSON(),
-        RollupWorker.mapUpdateVerificationKey
-      );
-      if (!ok) throw new Error("proof verification failed");
-      console.timeEnd(msg);
-      return JSON.stringify(proof.toJSON(), null, 2);
-    } else {
-      //console.log("Proofs are off, returning state as is");
-      console.timeEnd(msg);
-      return args.state;
-    }
-  }
-  public async merge(
-    proof1: string,
-    proof2: string
-  ): Promise<string | undefined> {
-    const msg = `proof merged with proofs ${proofsOff === true ? "off" : "on"}`;
-    console.time(msg);
-    if (proofsOff === false) {
-      await this.compile(false);
-      try {
+        if (
+          isAccepted === false &&
+          (time === undefined || tx === undefined || oldRoot === undefined)
+        )
+          throw new Error("time, tx or oldRoot is undefined");
+
+        await this.compile(false);
         if (RollupWorker.mapUpdateVerificationKey === undefined)
           throw new Error("verificationKey is undefined");
 
-        const sourceProof1: MapUpdateProof = await MapUpdateProof.fromJSON(
-          JSON.parse(proof1) as JsonProof
-        );
-        const sourceProof2: MapUpdateProof = await MapUpdateProof.fromJSON(
-          JSON.parse(proof2) as JsonProof
-        );
-        const state = MapTransition.merge(
-          sourceProof1.publicInput,
-          sourceProof2.publicInput
-        );
-        const proof = await MapUpdate.merge(state, sourceProof1, sourceProof2);
+        let proof: MapUpdateProof;
+        if (isAccepted === true) {
+          if (
+            updateType === "update" &&
+            (oldDomain === undefined || signature === undefined)
+          )
+            throw new Error("oldDomain or signature is undefined");
+          if (updateType === "extend" && oldDomain === undefined)
+            throw new Error("oldDomain is undefined");
+
+          const update: MapUpdateData = MapUpdateData.fromFields(
+            deserializeFields(args.update)
+          ) as MapUpdateData;
+          if (update === undefined) throw new Error("update is undefined");
+          if (updateType === undefined)
+            throw new Error("updateType is undefined");
+          if (updateType === "add") {
+            proof = await MapUpdate.add(state, update);
+          } else if (updateType === "remove") {
+            proof = await MapUpdate.remove(state, update);
+          } else if (updateType === "update") {
+            if (update === undefined) throw new Error("update is undefined");
+            if (oldDomain === undefined)
+              throw new Error("oldDomain is undefined");
+            if (signature === undefined)
+              throw new Error("signature is undefined");
+            const txSignature: Signature = signature;
+            const txUpdate: MapUpdateData = update;
+            const txDomain: RollupNftName = oldDomain;
+            proof = await MapUpdate.update(
+              state,
+              txUpdate,
+              txDomain,
+              txSignature
+            );
+          } else if (updateType === "extend") {
+            if (update === undefined) throw new Error("update is undefined");
+            if (oldDomain === undefined)
+              throw new Error("oldDomain is undefined");
+            const txUpdate: MapUpdateData = update;
+            const txDomain: RollupNftName = oldDomain;
+            proof = await MapUpdate.extend(state, txUpdate, txDomain);
+          } else {
+            throw new Error("invalid updateType");
+          }
+        } else {
+          if (time === undefined || tx === undefined || oldRoot === undefined)
+            throw new Error("time, tx or oldRoot is undefined");
+          proof = await MapUpdate.reject(state, oldRoot, time, tx);
+        }
+
         const ok = await verify(
           proof.toJSON(),
           RollupWorker.mapUpdateVerificationKey
@@ -299,22 +268,73 @@ export class RollupWorker extends zkCloudWorker {
         if (!ok) throw new Error("proof verification failed");
         console.timeEnd(msg);
         return JSON.stringify(proof.toJSON(), null, 2);
-      } catch (error) {
-        console.log("Error in merge", error);
+      } else {
+        //console.log("Proofs are off, returning state as is");
         console.timeEnd(msg);
-        throw error;
+        return args.state;
       }
-    } else {
-      //console.log("Proofs are off, merging state");
-      const state1: MapTransition = MapTransition.fromFields(
-        deserializeFields(proof1)
-      ) as MapTransition;
-      const state2: MapTransition = MapTransition.fromFields(
-        deserializeFields(proof2)
-      ) as MapTransition;
-      const state = MapTransition.merge(state1, state2);
-      console.timeEnd(msg);
-      return serializeFields(MapTransition.toFields(state));
+    } catch (error) {
+      console.error("Error in create", error);
+      await this.cloud.forceWorkerRestart();
+    }
+  }
+  public async merge(
+    proof1: string,
+    proof2: string
+  ): Promise<string | undefined> {
+    try {
+      const msg = `proof merged with proofs ${
+        proofsOff === true ? "off" : "on"
+      }`;
+      console.time(msg);
+      if (proofsOff === false) {
+        await this.compile(false);
+        try {
+          if (RollupWorker.mapUpdateVerificationKey === undefined)
+            throw new Error("verificationKey is undefined");
+
+          const sourceProof1: MapUpdateProof = await MapUpdateProof.fromJSON(
+            JSON.parse(proof1) as JsonProof
+          );
+          const sourceProof2: MapUpdateProof = await MapUpdateProof.fromJSON(
+            JSON.parse(proof2) as JsonProof
+          );
+          const state = MapTransition.merge(
+            sourceProof1.publicInput,
+            sourceProof2.publicInput
+          );
+          const proof = await MapUpdate.merge(
+            state,
+            sourceProof1,
+            sourceProof2
+          );
+          const ok = await verify(
+            proof.toJSON(),
+            RollupWorker.mapUpdateVerificationKey
+          );
+          if (!ok) throw new Error("proof verification failed");
+          console.timeEnd(msg);
+          return JSON.stringify(proof.toJSON(), null, 2);
+        } catch (error) {
+          console.log("Error in merge", error);
+          console.timeEnd(msg);
+          throw error;
+        }
+      } else {
+        //console.log("Proofs are off, merging state");
+        const state1: MapTransition = MapTransition.fromFields(
+          deserializeFields(proof1)
+        ) as MapTransition;
+        const state2: MapTransition = MapTransition.fromFields(
+          deserializeFields(proof2)
+        ) as MapTransition;
+        const state = MapTransition.merge(state1, state2);
+        console.timeEnd(msg);
+        return serializeFields(MapTransition.toFields(state));
+      }
+    } catch (error) {
+      console.error("Error in create", error);
+      await this.cloud.forceWorkerRestart();
     }
   }
 
@@ -323,7 +343,7 @@ export class RollupWorker extends zkCloudWorker {
       case "createTxTask":
         return await this.createTxTask();
       case "getBlocksInfo":
-        return await this.getBlocksInfo();
+        return await this.getBlocksInfo({});
       case "getMetadata":
         return await this.getMetadata();
       case "restart":
@@ -360,10 +380,13 @@ export class RollupWorker extends zkCloudWorker {
       switch (this.cloud.task) {
         case "validateBlock":
           result = await this.validateRollupBlock();
+          break;
         case "proveBlock":
           result = await this.proveRollupBlock();
+          break;
         case "txTask":
           result = await this.txTask();
+          break;
 
         default:
           console.error("Unknown task in task:", this.cloud.task);
@@ -630,6 +653,11 @@ export class RollupWorker extends zkCloudWorker {
         args: JSON.stringify({ contractAddress: contractAddress.toBase58() }),
         metadata: `rollupNFT with ${transactions.length} transactions`,
       });
+      await algoliaWriteBlock({
+        contractAddress: contractAddress.toBase58(),
+        chain: this.cloud.chain,
+        txs,
+      });
       return { success: true, transactions: txs };
     } catch (error) {
       console.error("Error in rollupNFT", error);
@@ -637,18 +665,25 @@ export class RollupWorker extends zkCloudWorker {
     }
   }
 
-  private async getBlocksInfo(): Promise<string | undefined> {
-    const MAX_BLOCKS = 10;
+  private async getBlocksInfo(params: {
+    startBlock?: PublicKey;
+    writeToAlgolia?: boolean;
+  }): Promise<string | undefined> {
+    const MAX_BLOCKS = 3;
     try {
-      let startBlock: PublicKey | undefined = undefined;
+      let { startBlock, writeToAlgolia } = params;
       let contractAddress: PublicKey | undefined = undefined;
+      let allBlocks: boolean = false;
       if (this.cloud.args !== undefined) {
         const args = JSON.parse(this.cloud.args);
+        console.log("getBlocksInfo", args);
         startBlock =
           args.startBlock === undefined
             ? undefined
             : PublicKey.fromBase58(args.startBlock);
         contractAddress = PublicKey.fromBase58(args.contractAddress);
+        allBlocks = args.allBlocks === true;
+        console.log("getBlocksInfo", { args, allBlocks });
       }
       if (contractAddress === undefined) {
         console.error("getBlocksInfo: contractAddress is undefined");
@@ -709,7 +744,7 @@ export class RollupWorker extends zkCloudWorker {
       let block = new BlockContract(blockAddress, tokenId);
       let blockNumber = Number(block.blockNumber.get().toBigInt());
       const blocks: {}[] = [];
-      while (count < MAX_BLOCKS && blockNumber > 0) {
+      while ((count < MAX_BLOCKS || allBlocks) && blockNumber > 0) {
         const root = block.root.get().toJSON();
         const storage = block.storage.get().toIpfsHash();
         const flags = BlockParams.unpack(block.blockParams.get());
@@ -745,6 +780,15 @@ export class RollupWorker extends zkCloudWorker {
         });
         blockNumber = Number(block.blockNumber.get().toBigInt());
         count++;
+      }
+      if (writeToAlgolia) {
+        for (const block of blocks) {
+          await algoliaWriteBlock({
+            contractAddress: contractAddress.toBase58(),
+            block,
+            chain: this.cloud.chain,
+          });
+        }
       }
       return JSON.stringify(
         {
@@ -1018,6 +1062,10 @@ export class RollupWorker extends zkCloudWorker {
           `proofMap.${previousBlockNumber}.jobId`,
           undefined
         );
+        await this.getBlocksInfo({
+          startBlock: previousBlockAddress,
+          writeToAlgolia: true,
+        });
       }
 
       await this.compile();
@@ -1222,6 +1270,10 @@ export class RollupWorker extends zkCloudWorker {
         isPreviousBlockFinal = previousBlockParams.isFinal.toBoolean();
         let found = false;
         while (found === false) {
+          await this.getBlocksInfo({
+            startBlock: previousValidBlockAddress,
+            writeToAlgolia: true,
+          });
           if (previousBlockParams.isInvalid.toBoolean() === false) found = true;
           else {
             previousValidBlockAddress = previousBlock.previousBlock.get();
@@ -1937,6 +1989,11 @@ export class RollupWorker extends zkCloudWorker {
         previousValidBlockParams.timeCreated.toBigInt()
       );
 
+      await this.getBlocksInfo({
+        startBlock: previousValidBlockAddress,
+        writeToAlgolia: true,
+      });
+
       if (
         txs.length < this.MIN_TRANSACTIONS &&
         Date.now() - previousBlockTimeCreated < this.MAX_TIME_BETWEEN_BLOCKS
@@ -2250,6 +2307,28 @@ export class RollupWorker extends zkCloudWorker {
         mapHash: "https://gateway.pinata.cloud/ipfs/" + mapHash,
       });
 
+      const block = {
+        blockNumber: json.blockNumber,
+        blockAddress: json.blockAddress,
+        root: json.root,
+        ipfs: hash,
+        isValidated: false,
+        isInvalid: false,
+        isProved: false,
+        isFinal: false,
+        timeCreated: json.timeCreated,
+        txsCount: json.txsCount,
+        txsHash: json.txsHash,
+        previousBlockAddress: json.previousBlockAddress,
+      };
+
+      await algoliaWriteBlock({
+        block,
+        contractAddress: contractAddress.toBase58(),
+        chain: this.cloud.chain,
+        txs: json.transactions.map((tx) => tx.tx),
+      });
+
       const blockStorage = Storage.fromIpfsHash(hash);
       if (
         blockProducer.privateKey.toPublicKey().toBase58() !==
@@ -2411,6 +2490,11 @@ export class RollupWorker extends zkCloudWorker {
           await sleep(20000);
         }
 
+        await algoliaWriteBlock({
+          block: { txId: txSent.hash, ...block },
+          contractAddress: contractAddress.toBase58(),
+          chain: this.cloud.chain,
+        });
         await this.cloud.addTask({
           args: JSON.stringify(
             {
