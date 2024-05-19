@@ -77,6 +77,8 @@ import { nameContract } from "./config";
 import { RollupNFTData, createRollupNFT } from "./rollup/rollup-nft";
 import { Metadata } from "minanft";
 import { algoliaWriteToken } from "./nft/algolia";
+import { algoliaWriteBlock } from "./nft";
+import { write } from "fs";
 
 const fullValidation = true;
 const proofsOff = false as boolean;
@@ -157,141 +159,108 @@ export class RollupWorker extends zkCloudWorker {
   }
 
   public async create(transaction: string): Promise<string | undefined> {
-    const msg = `proof created with proofs ${
-      proofsOff === true ? "off" : "on"
-    }`;
-    console.time(msg);
-    const args = JSON.parse(transaction);
-    if (proofsOff === false) {
-      const state: MapTransition = MapTransition.fromFields(
-        deserializeFields(args.state)
-      ) as MapTransition;
-      // TODO: handle all operations
-      const isAccepted = args.isAccepted;
-      const updateType = args.type;
-      const signature = args.signature
-        ? (Signature.fromBase58(args.signature) as Signature)
-        : undefined;
-      const oldDomain = args.oldDomain
-        ? (RollupNftName.fromFields(
-            deserializeFields(args.oldDomain)
-          ) as RollupNftName)
-        : undefined;
-      const oldRoot = args.oldRoot ? Field.fromJSON(args.oldRoot) : undefined;
-      const time = args.time ? UInt64.from(BigInt(args.time)) : undefined;
-      const tx = args.tx
-        ? (DomainTransaction.fromFields(
-            deserializeFields(args.tx)
-          ) as DomainTransaction)
-        : undefined;
+    try {
+      const msg = `proof created with proofs ${
+        proofsOff === true ? "off" : "on"
+      }`;
+      console.time(msg);
+      const args = JSON.parse(transaction);
+      if (proofsOff === false) {
+        const state: MapTransition = MapTransition.fromFields(
+          deserializeFields(args.state)
+        ) as MapTransition;
+        // TODO: handle all operations
+        const isAccepted = args.isAccepted;
+        const updateType = args.type;
+        const signature = args.signature
+          ? (Signature.fromBase58(args.signature) as Signature)
+          : undefined;
+        const oldDomain = args.oldDomain
+          ? (RollupNftName.fromFields(
+              deserializeFields(args.oldDomain)
+            ) as RollupNftName)
+          : undefined;
+        const oldRoot = args.oldRoot ? Field.fromJSON(args.oldRoot) : undefined;
+        const time = args.time ? UInt64.from(BigInt(args.time)) : undefined;
+        const tx = args.tx
+          ? (DomainTransaction.fromFields(
+              deserializeFields(args.tx)
+            ) as DomainTransaction)
+          : undefined;
 
-      if (isAccepted === undefined) throw new Error("isAccepted is undefined");
-      if (updateType === undefined) throw new Error("updateType is undefined");
-      if (
-        updateType !== "add" &&
-        updateType !== "remove" &&
-        updateType !== "update" &&
-        updateType !== "extend"
-      )
-        throw new Error("updateType is invalid");
-
-      if (
-        isAccepted === false &&
-        (time === undefined || tx === undefined || oldRoot === undefined)
-      )
-        throw new Error("time, tx or oldRoot is undefined");
-
-      await this.compile(false);
-      if (RollupWorker.mapUpdateVerificationKey === undefined)
-        throw new Error("verificationKey is undefined");
-
-      let proof: MapUpdateProof;
-      if (isAccepted === true) {
-        if (
-          updateType === "update" &&
-          (oldDomain === undefined || signature === undefined)
-        )
-          throw new Error("oldDomain or signature is undefined");
-        if (updateType === "extend" && oldDomain === undefined)
-          throw new Error("oldDomain is undefined");
-
-        const update: MapUpdateData = MapUpdateData.fromFields(
-          deserializeFields(args.update)
-        ) as MapUpdateData;
-        if (update === undefined) throw new Error("update is undefined");
+        if (isAccepted === undefined)
+          throw new Error("isAccepted is undefined");
         if (updateType === undefined)
           throw new Error("updateType is undefined");
-        if (updateType === "add") {
-          proof = await MapUpdate.add(state, update);
-        } else if (updateType === "remove") {
-          proof = await MapUpdate.remove(state, update);
-        } else if (updateType === "update") {
-          if (update === undefined) throw new Error("update is undefined");
-          if (oldDomain === undefined)
-            throw new Error("oldDomain is undefined");
-          if (signature === undefined)
-            throw new Error("signature is undefined");
-          const txSignature: Signature = signature;
-          const txUpdate: MapUpdateData = update;
-          const txDomain: RollupNftName = oldDomain;
-          proof = await MapUpdate.update(
-            state,
-            txUpdate,
-            txDomain,
-            txSignature
-          );
-        } else if (updateType === "extend") {
-          if (update === undefined) throw new Error("update is undefined");
-          if (oldDomain === undefined)
-            throw new Error("oldDomain is undefined");
-          const txUpdate: MapUpdateData = update;
-          const txDomain: RollupNftName = oldDomain;
-          proof = await MapUpdate.extend(state, txUpdate, txDomain);
-        } else {
-          throw new Error("invalid updateType");
-        }
-      } else {
-        if (time === undefined || tx === undefined || oldRoot === undefined)
-          throw new Error("time, tx or oldRoot is undefined");
-        proof = await MapUpdate.reject(state, oldRoot, time, tx);
-      }
+        if (
+          updateType !== "add" &&
+          updateType !== "remove" &&
+          updateType !== "update" &&
+          updateType !== "extend"
+        )
+          throw new Error("updateType is invalid");
 
-      const ok = await verify(
-        proof.toJSON(),
-        RollupWorker.mapUpdateVerificationKey
-      );
-      if (!ok) throw new Error("proof verification failed");
-      console.timeEnd(msg);
-      return JSON.stringify(proof.toJSON(), null, 2);
-    } else {
-      //console.log("Proofs are off, returning state as is");
-      console.timeEnd(msg);
-      return args.state;
-    }
-  }
-  public async merge(
-    proof1: string,
-    proof2: string
-  ): Promise<string | undefined> {
-    const msg = `proof merged with proofs ${proofsOff === true ? "off" : "on"}`;
-    console.time(msg);
-    if (proofsOff === false) {
-      await this.compile(false);
-      try {
+        if (
+          isAccepted === false &&
+          (time === undefined || tx === undefined || oldRoot === undefined)
+        )
+          throw new Error("time, tx or oldRoot is undefined");
+
+        await this.compile(false);
         if (RollupWorker.mapUpdateVerificationKey === undefined)
           throw new Error("verificationKey is undefined");
 
-        const sourceProof1: MapUpdateProof = await MapUpdateProof.fromJSON(
-          JSON.parse(proof1) as JsonProof
-        );
-        const sourceProof2: MapUpdateProof = await MapUpdateProof.fromJSON(
-          JSON.parse(proof2) as JsonProof
-        );
-        const state = MapTransition.merge(
-          sourceProof1.publicInput,
-          sourceProof2.publicInput
-        );
-        const proof = await MapUpdate.merge(state, sourceProof1, sourceProof2);
+        let proof: MapUpdateProof;
+        if (isAccepted === true) {
+          if (
+            updateType === "update" &&
+            (oldDomain === undefined || signature === undefined)
+          )
+            throw new Error("oldDomain or signature is undefined");
+          if (updateType === "extend" && oldDomain === undefined)
+            throw new Error("oldDomain is undefined");
+
+          const update: MapUpdateData = MapUpdateData.fromFields(
+            deserializeFields(args.update)
+          ) as MapUpdateData;
+          if (update === undefined) throw new Error("update is undefined");
+          if (updateType === undefined)
+            throw new Error("updateType is undefined");
+          if (updateType === "add") {
+            proof = await MapUpdate.add(state, update);
+          } else if (updateType === "remove") {
+            proof = await MapUpdate.remove(state, update);
+          } else if (updateType === "update") {
+            if (update === undefined) throw new Error("update is undefined");
+            if (oldDomain === undefined)
+              throw new Error("oldDomain is undefined");
+            if (signature === undefined)
+              throw new Error("signature is undefined");
+            const txSignature: Signature = signature;
+            const txUpdate: MapUpdateData = update;
+            const txDomain: RollupNftName = oldDomain;
+            proof = await MapUpdate.update(
+              state,
+              txUpdate,
+              txDomain,
+              txSignature
+            );
+          } else if (updateType === "extend") {
+            if (update === undefined) throw new Error("update is undefined");
+            if (oldDomain === undefined)
+              throw new Error("oldDomain is undefined");
+            const txUpdate: MapUpdateData = update;
+            const txDomain: RollupNftName = oldDomain;
+            proof = await MapUpdate.extend(state, txUpdate, txDomain);
+          } else {
+            throw new Error("invalid updateType");
+          }
+        } else {
+          if (time === undefined || tx === undefined || oldRoot === undefined)
+            throw new Error("time, tx or oldRoot is undefined");
+          proof = await MapUpdate.reject(state, oldRoot, time, tx);
+        }
+
         const ok = await verify(
           proof.toJSON(),
           RollupWorker.mapUpdateVerificationKey
@@ -299,22 +268,73 @@ export class RollupWorker extends zkCloudWorker {
         if (!ok) throw new Error("proof verification failed");
         console.timeEnd(msg);
         return JSON.stringify(proof.toJSON(), null, 2);
-      } catch (error) {
-        console.log("Error in merge", error);
+      } else {
+        //console.log("Proofs are off, returning state as is");
         console.timeEnd(msg);
-        throw error;
+        return args.state;
       }
-    } else {
-      //console.log("Proofs are off, merging state");
-      const state1: MapTransition = MapTransition.fromFields(
-        deserializeFields(proof1)
-      ) as MapTransition;
-      const state2: MapTransition = MapTransition.fromFields(
-        deserializeFields(proof2)
-      ) as MapTransition;
-      const state = MapTransition.merge(state1, state2);
-      console.timeEnd(msg);
-      return serializeFields(MapTransition.toFields(state));
+    } catch (error) {
+      console.error("Error in create", error);
+      await this.cloud.forceWorkerRestart();
+    }
+  }
+  public async merge(
+    proof1: string,
+    proof2: string
+  ): Promise<string | undefined> {
+    try {
+      const msg = `proof merged with proofs ${
+        proofsOff === true ? "off" : "on"
+      }`;
+      console.time(msg);
+      if (proofsOff === false) {
+        await this.compile(false);
+        try {
+          if (RollupWorker.mapUpdateVerificationKey === undefined)
+            throw new Error("verificationKey is undefined");
+
+          const sourceProof1: MapUpdateProof = await MapUpdateProof.fromJSON(
+            JSON.parse(proof1) as JsonProof
+          );
+          const sourceProof2: MapUpdateProof = await MapUpdateProof.fromJSON(
+            JSON.parse(proof2) as JsonProof
+          );
+          const state = MapTransition.merge(
+            sourceProof1.publicInput,
+            sourceProof2.publicInput
+          );
+          const proof = await MapUpdate.merge(
+            state,
+            sourceProof1,
+            sourceProof2
+          );
+          const ok = await verify(
+            proof.toJSON(),
+            RollupWorker.mapUpdateVerificationKey
+          );
+          if (!ok) throw new Error("proof verification failed");
+          console.timeEnd(msg);
+          return JSON.stringify(proof.toJSON(), null, 2);
+        } catch (error) {
+          console.log("Error in merge", error);
+          console.timeEnd(msg);
+          throw error;
+        }
+      } else {
+        //console.log("Proofs are off, merging state");
+        const state1: MapTransition = MapTransition.fromFields(
+          deserializeFields(proof1)
+        ) as MapTransition;
+        const state2: MapTransition = MapTransition.fromFields(
+          deserializeFields(proof2)
+        ) as MapTransition;
+        const state = MapTransition.merge(state1, state2);
+        console.timeEnd(msg);
+        return serializeFields(MapTransition.toFields(state));
+      }
+    } catch (error) {
+      console.error("Error in create", error);
+      await this.cloud.forceWorkerRestart();
     }
   }
 
@@ -323,7 +343,7 @@ export class RollupWorker extends zkCloudWorker {
       case "createTxTask":
         return await this.createTxTask();
       case "getBlocksInfo":
-        return await this.getBlocksInfo();
+        return await this.getBlocksInfo({});
       case "getMetadata":
         return await this.getMetadata();
       case "restart":
@@ -353,21 +373,29 @@ export class RollupWorker extends zkCloudWorker {
     console.log(
       `Executing task ${this.cloud.task} with taskId ${this.cloud.taskId}`
     );
+    if (!(await this.run()))
+      return `task ${this.cloud.task} is already running`;
+    let result: string | undefined = undefined;
     try {
       switch (this.cloud.task) {
         case "validateBlock":
-          return await this.validateRollupBlock();
+          result = await this.validateRollupBlock();
+          break;
         case "proveBlock":
-          return await this.proveRollupBlock();
+          result = await this.proveRollupBlock();
+          break;
         case "txTask":
-          return await this.txTask();
+          result = await this.txTask();
+          break;
 
         default:
           console.error("Unknown task in task:", this.cloud.task);
-          return "error: Unknown task in task";
       }
+      await this.stop();
+      return result ?? "error in task";
     } catch (error) {
       console.error("Error in task", error);
+      await this.stop();
       return "error in task";
     }
   }
@@ -625,6 +653,11 @@ export class RollupWorker extends zkCloudWorker {
         args: JSON.stringify({ contractAddress: contractAddress.toBase58() }),
         metadata: `rollupNFT with ${transactions.length} transactions`,
       });
+      await algoliaWriteBlock({
+        contractAddress: contractAddress.toBase58(),
+        chain: this.cloud.chain,
+        txs,
+      });
       return { success: true, transactions: txs };
     } catch (error) {
       console.error("Error in rollupNFT", error);
@@ -632,18 +665,25 @@ export class RollupWorker extends zkCloudWorker {
     }
   }
 
-  private async getBlocksInfo(): Promise<string | undefined> {
-    const MAX_BLOCKS = 10;
+  private async getBlocksInfo(params: {
+    startBlock?: PublicKey;
+    writeToAlgolia?: boolean;
+  }): Promise<string | undefined> {
+    const MAX_BLOCKS = 3;
     try {
-      let startBlock: PublicKey | undefined = undefined;
+      let { startBlock, writeToAlgolia } = params;
       let contractAddress: PublicKey | undefined = undefined;
+      let allBlocks: boolean = false;
       if (this.cloud.args !== undefined) {
         const args = JSON.parse(this.cloud.args);
+        console.log("getBlocksInfo", args);
         startBlock =
           args.startBlock === undefined
             ? undefined
             : PublicKey.fromBase58(args.startBlock);
         contractAddress = PublicKey.fromBase58(args.contractAddress);
+        allBlocks = args.allBlocks === true;
+        console.log("getBlocksInfo", { args, allBlocks });
       }
       if (contractAddress === undefined) {
         console.error("getBlocksInfo: contractAddress is undefined");
@@ -704,7 +744,7 @@ export class RollupWorker extends zkCloudWorker {
       let block = new BlockContract(blockAddress, tokenId);
       let blockNumber = Number(block.blockNumber.get().toBigInt());
       const blocks: {}[] = [];
-      while (count < MAX_BLOCKS && blockNumber > 0) {
+      while ((count < MAX_BLOCKS || allBlocks) && blockNumber > 0) {
         const root = block.root.get().toJSON();
         const storage = block.storage.get().toIpfsHash();
         const flags = BlockParams.unpack(block.blockParams.get());
@@ -740,6 +780,15 @@ export class RollupWorker extends zkCloudWorker {
         });
         blockNumber = Number(block.blockNumber.get().toBigInt());
         count++;
+      }
+      if (writeToAlgolia) {
+        for (const block of blocks) {
+          await algoliaWriteBlock({
+            contractAddress: contractAddress.toBase58(),
+            block,
+            chain: this.cloud.chain,
+          });
+        }
       }
       return JSON.stringify(
         {
@@ -884,7 +933,6 @@ export class RollupWorker extends zkCloudWorker {
   }
 
   private async proveRollupBlock(): Promise<string | undefined> {
-    if (!(await this.run())) return "proveRollupBlock is already running";
     if (this.cloud.args === undefined)
       throw new Error("this.cloud.args is undefined");
     console.time("proveBlock");
@@ -910,14 +958,14 @@ export class RollupWorker extends zkCloudWorker {
           console.error(`Proof job failed for block ${args.blockNumber}`);
           await this.cloud.deleteTask(this.cloud.taskId);
           console.timeEnd("proveBlock");
-          await this.stop();
+
           return "proof job failed";
         } else {
           console.log(
             `Proof job is not finished yet for block ${args.blockNumber}`
           );
           console.timeEnd("proveBlock");
-          await this.stop();
+
           return "proof job is not finished yet";
         }
       }
@@ -949,7 +997,7 @@ export class RollupWorker extends zkCloudWorker {
       if (!Mina.hasAccount(blockAddress, tokenId)) {
         console.log(`Block ${blockAddress.toBase58()} not found`);
         console.timeEnd("proveBlock");
-        await this.stop();
+
         return "block is not found";
       }
       const block = new BlockContract(blockAddress, tokenId);
@@ -957,14 +1005,14 @@ export class RollupWorker extends zkCloudWorker {
       if (flags.isValidated.toBoolean() === false) {
         console.log(`Block ${blockNumber} is not yet validated`);
         console.timeEnd("proveBlock");
-        await this.stop();
+
         return "block is not validated";
       }
       if (flags.isInvalid.toBoolean() === true) {
         console.error(`Block ${blockNumber} is invalid`);
         await this.cloud.deleteTask(this.cloud.taskId);
         console.timeEnd("proveBlock");
-        await this.stop();
+
         return "block is invalid";
       }
 
@@ -972,7 +1020,7 @@ export class RollupWorker extends zkCloudWorker {
         console.error(`Block ${blockNumber} is already proved`);
         await this.cloud.deleteTask(this.cloud.taskId);
         console.timeEnd("proveBlock");
-        await this.stop();
+
         return "block is already proved";
       }
 
@@ -987,7 +1035,7 @@ export class RollupWorker extends zkCloudWorker {
           `Previous block ${previousBlockAddress.toBase58()} not found`
         );
         console.timeEnd("proveBlock");
-        await this.stop();
+
         return "previous block is not found";
       }
 
@@ -996,7 +1044,7 @@ export class RollupWorker extends zkCloudWorker {
       if (oldRoot.toJSON() !== state.oldRoot.toJSON()) {
         console.error(`Invalid previous block root`);
         console.timeEnd("proveBlock");
-        await this.stop();
+
         return "Invalid previous block root";
       }
 
@@ -1004,7 +1052,7 @@ export class RollupWorker extends zkCloudWorker {
       if (flagsPrevious.isFinal.toBoolean() === false) {
         console.log(`Previous block is not final`);
         console.timeEnd("proveBlock");
-        await this.stop();
+
         return "Previous block is not final";
       } else {
         const previousBlockNumber = Number(
@@ -1014,6 +1062,10 @@ export class RollupWorker extends zkCloudWorker {
           `proofMap.${previousBlockNumber}.jobId`,
           undefined
         );
+        await this.getBlocksInfo({
+          startBlock: previousBlockAddress,
+          writeToAlgolia: true,
+        });
       }
 
       await this.compile();
@@ -1090,18 +1142,16 @@ export class RollupWorker extends zkCloudWorker {
         }
         await sleep(20000);
       }
-      await this.stop();
+
       return txSent.hash;
     } catch (error) {
       console.error("Error in proveRollupBlock", error);
-      await this.stop();
+
       return "Error in proveRollupBlock";
     }
   }
 
   private async validateRollupBlock(): Promise<string | undefined> {
-    if (!(await this.run())) return "validateRollupBlock is already running";
-
     try {
       if (this.cloud.args === undefined)
         throw new Error("this.cloud.args is undefined");
@@ -1143,7 +1193,7 @@ export class RollupWorker extends zkCloudWorker {
         if (!Mina.hasAccount(blockAddress, tokenId)) {
           console.log(`Block ${blockAddress.toBase58()} not found`);
           console.timeEnd(`block ${args.blockNumber} validated`);
-          await this.stop();
+
           return "block is not found";
         }
 
@@ -1158,7 +1208,7 @@ export class RollupWorker extends zkCloudWorker {
           console.log(`Block ${blockNumber} is marked as invalid`);
           await this.cloud.deleteTask(this.cloud.taskId);
           console.timeEnd(`block ${args.blockNumber} validated`);
-          await this.stop();
+
           return `Block ${blockNumber} is marked as invalid`;
         }
 
@@ -1198,7 +1248,7 @@ export class RollupWorker extends zkCloudWorker {
                 });
               await this.cloud.deleteTask(this.cloud.taskId);
               console.timeEnd(`block ${args.blockNumber} validated`);
-              await this.stop();
+
               return `Block ${blockNumber} is already validated`;
             }
           }
@@ -1220,6 +1270,10 @@ export class RollupWorker extends zkCloudWorker {
         isPreviousBlockFinal = previousBlockParams.isFinal.toBoolean();
         let found = false;
         while (found === false) {
+          await this.getBlocksInfo({
+            startBlock: previousValidBlockAddress,
+            writeToAlgolia: true,
+          });
           if (previousBlockParams.isInvalid.toBoolean() === false) found = true;
           else {
             previousValidBlockAddress = previousBlock.previousBlock.get();
@@ -1242,7 +1296,7 @@ export class RollupWorker extends zkCloudWorker {
         if (previousBlockParams.isValidated.toBoolean() === false) {
           console.log(`Previous block is not validated yet, waiting`);
           console.timeEnd(`block ${args.blockNumber} validated`);
-          await this.stop();
+
           return `Previous block is not validated yet, waiting`;
         }
 
@@ -1430,7 +1484,7 @@ export class RollupWorker extends zkCloudWorker {
           });
           await this.cloud.deleteTask(this.cloud.taskId);
           console.timeEnd(`block ${blockNumber} validated`);
-          await this.stop();
+
           return `Block ${blockNumber} is already validated`;
         }
 
@@ -1465,7 +1519,7 @@ export class RollupWorker extends zkCloudWorker {
             `Block ${args.blockNumber} is bad and previous block is not final`
           );
           console.timeEnd(`block ${args.blockNumber} validated`);
-          await this.stop();
+
           return `Block ${args.blockNumber} is bad and previous block is not final`;
         }
         validated = false;
@@ -1619,11 +1673,11 @@ export class RollupWorker extends zkCloudWorker {
         }
         await sleep(20000);
       }
-      await this.stop();
+
       return txSent.hash;
     } catch (error) {
       console.error("Error in validateRollupBlock", error);
-      await this.stop();
+
       return "Error in validateRollupBlock";
     }
   }
@@ -1857,7 +1911,6 @@ export class RollupWorker extends zkCloudWorker {
   private async createRollupBlock(
     txs: CloudTransaction[]
   ): Promise<string | undefined> {
-    if (!(await this.run())) return "createRollupBlock is already running";
     try {
       if (this.cloud.args === undefined)
         throw new Error("this.cloud.args is undefined");
@@ -1899,7 +1952,7 @@ export class RollupWorker extends zkCloudWorker {
             console.log(
               "lastBlockAddress is not equal to previousBlockAddress, waiting.."
             );
-            await this.stop();
+
             return "lastBlockAddress is not equal to previousBlockAddress";
           }
           if (timeStarted > Date.now() - this.MIN_TIME_BETWEEN_BLOCKS) {
@@ -1907,7 +1960,7 @@ export class RollupWorker extends zkCloudWorker {
               lastBlockTme: new Date(timeStarted).toLocaleString(),
               now: new Date().toLocaleString(),
             });
-            await this.stop();
+
             return "Not enough time between blocks";
           }
         }
@@ -1929,19 +1982,24 @@ export class RollupWorker extends zkCloudWorker {
         previousValidBlockParams.isValidated.toBoolean() === false
       ) {
         console.log(`Previous block is not final and not validated`);
-        await this.stop();
+
         return "Previous block is not final and not validated";
       }
       const previousBlockTimeCreated = Number(
         previousValidBlockParams.timeCreated.toBigInt()
       );
 
+      await this.getBlocksInfo({
+        startBlock: previousValidBlockAddress,
+        writeToAlgolia: true,
+      });
+
       if (
         txs.length < this.MIN_TRANSACTIONS &&
         Date.now() - previousBlockTimeCreated < this.MAX_TIME_BETWEEN_BLOCKS
       ) {
         console.log("Not enough transactions to create a block:", txs.length);
-        await this.stop();
+
         return "Not enough transactions to create a block";
       }
 
@@ -2094,7 +2152,7 @@ export class RollupWorker extends zkCloudWorker {
       ) {
         console.log("Not enough transactions to create a block:", count);
         await this.cloud.saveDataByKey("lastBlockAddress", undefined);
-        await this.stop();
+
         console.timeEnd("block calculated");
         console.timeEnd("block created");
         return "Not enough transactions to create a block";
@@ -2249,6 +2307,28 @@ export class RollupWorker extends zkCloudWorker {
         mapHash: "https://gateway.pinata.cloud/ipfs/" + mapHash,
       });
 
+      const block = {
+        blockNumber: json.blockNumber,
+        blockAddress: json.blockAddress,
+        root: json.root,
+        ipfs: hash,
+        isValidated: false,
+        isInvalid: false,
+        isProved: false,
+        isFinal: false,
+        timeCreated: json.timeCreated,
+        txsCount: json.txsCount,
+        txsHash: json.txsHash,
+        previousBlockAddress: json.previousBlockAddress,
+      };
+
+      await algoliaWriteBlock({
+        block,
+        contractAddress: contractAddress.toBase58(),
+        chain: this.cloud.chain,
+        txs: json.transactions.map((tx) => tx.tx),
+      });
+
       const blockStorage = Storage.fromIpfsHash(hash);
       if (
         blockProducer.privateKey.toPublicKey().toBase58() !==
@@ -2397,7 +2477,7 @@ export class RollupWorker extends zkCloudWorker {
         if (txSent.status !== "pending") {
           console.error("Error sending block creation transaction");
           console.timeEnd(`block created`);
-          await this.stop();
+
           return "Error sending block creation transaction";
         }
         if (this.cloud.isLocalCloud === true) {
@@ -2410,6 +2490,11 @@ export class RollupWorker extends zkCloudWorker {
           await sleep(20000);
         }
 
+        await algoliaWriteBlock({
+          block: { txId: txSent.hash, ...block },
+          contractAddress: contractAddress.toBase58(),
+          chain: this.cloud.chain,
+        });
         await this.cloud.addTask({
           args: JSON.stringify(
             {
@@ -2428,17 +2513,17 @@ export class RollupWorker extends zkCloudWorker {
         });
 
         console.timeEnd(`block created`);
-        await this.stop();
+
         return txSent.hash;
       } catch (error) {
         console.error("Error sending block creation transaction", error);
         console.timeEnd(`block created`);
-        await this.stop();
+
         return "Error sending block creation transaction";
       }
     } catch (error: any) {
       console.error("Error in createRollupBlock", error);
-      await this.stop();
+
       return "Error in createRollupBlock";
     }
   }

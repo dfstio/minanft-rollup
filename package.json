@@ -1,11 +1,12 @@
 {
   "name": "minanft-rollup",
-  "version": "0.2.2",
+  "version": "0.2.6",
   "author": "DFST",
   "license": "Apache-2.0",
   "scripts": {
     "compile": "rm -rf dist && tsc",
-    "test": "jest"
+    "test": "jest tests/rollup.test.ts",
+    "index": "jest tests/index.test.ts"
   },
   "dependencies": {
     "algoliasearch": "^4.23.3",
