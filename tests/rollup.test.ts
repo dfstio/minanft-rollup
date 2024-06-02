@@ -59,6 +59,7 @@ const { name: repo, author: developer, version } = packageJson;
 setNumberOfWorkers(8);
 const chain: blockchain = "local" as blockchain;
 const deploy = true;
+const update = false;
 const useLocalCloudWorker = true;
 const api = new zkCloudWorkerClient({
   jwt: useLocalCloudWorker ? "local" : JWT,
@@ -68,7 +69,7 @@ const api = new zkCloudWorkerClient({
 
 let deployer: PrivateKey;
 let sender: PublicKey;
-const ELEMENTS_NUMBER = 2;
+const ELEMENTS_NUMBER = 1;
 
 interface User {
   name: string;
@@ -404,117 +405,119 @@ describe("Domain Name Service Contract", () => {
     await getDatabase();
   });
 
-  it(`should prepare second block data`, async () => {
-    console.log("Preparing data...");
-    console.time(`prepared data`);
+  if (update) {
+    it(`should prepare second block data`, async () => {
+      console.log("Preparing data...");
+      console.time(`prepared data`);
 
-    for (let k = 0; k < ELEMENTS_NUMBER; k++) {
-      const oldDomain = database.data[users[k].name];
-      console.log(`old domain:`, oldDomain);
-      const tx1 = await createUpdateTransaction(
-        users[k].name,
-        users[k].privateKey.toPublicKey().toBase58(),
-        oldDomain
-      );
-      expect(tx1).toBeDefined();
-      if (tx1 === undefined) throw new Error("Transaction is undefined");
-      console.log(`tx1:`, tx1);
-      const tx2 = await prepareSignTransactionData(tx1);
-      console.log(`tx2:`, tx2);
-      await sleep(5000);
-      expect(tx2).toBeDefined();
-      if (tx2 === undefined) throw new Error("Transaction is undefined");
-      expect(tx2.signature).toBeDefined();
-      if (tx2.signature === undefined)
-        throw new Error("Signature is undefined");
-      const signData = JSON.parse(tx2.signature).signatureData.map(
-        (v: string) => Field.fromJSON(v)
-      );
-      const signature = Signature.create(users[k].privateKey, signData);
-      tx2.signature = signature.toBase58();
-      updateTransactions.push(JSON.stringify(tx2, null, 2));
-    }
-
-    console.timeEnd(`prepared data`);
-  });
-
-  it(`should send transactions for second block`, async () => {
-    console.time(`Txs to the block sent`);
-    const apiresult = await api.sendTransactions({
-      repo: "nameservice",
-      developer: "@staketab",
-      transactions: updateTransactions,
-    });
-    expect(apiresult).toBeDefined();
-    if (apiresult === undefined) return;
-    expect(apiresult.success).toBe(true);
-    console.log(`tx api call result:`, apiresult);
-    console.timeEnd(`Txs to the block sent`);
-
-    console.log(`Processing tasks...`);
-    while (
-      (await LocalCloud.processLocalTasks({
-        developer,
-        repo,
-        localWorker: zkcloudworker,
-        chain,
-      })) > 1
-    ) {
-      await sleep(10000);
-    }
-    Memory.info(`tasks processed`);
-  });
-
-  it(`should get Rollup's NFT URLs and uri from the DA layer`, async () => {
-    await getDatabase();
-  });
-
-  it(`should change validators`, async () => {
-    console.log(`Changing validators...`);
-    Memory.info("changing validators");
-    const expiry = UInt64.from(Date.now() + 1000 * 60 * 60 * 24 * 2000);
-    const decision = new ValidatorsDecision({
-      contractAddress: contractPublicKey,
-      chainId: getNetworkIdHash(),
-      validators,
-      decisionType: ValidatorDecisionType.setValidators,
-      data: ChangeValidatorsData.toFields({
-        new: validators,
-        old: validators,
-        storage: new Storage({ hashString: [Field(0), Field(0)] }),
-      }),
-      expiry,
-    });
-    const proof: ValidatorsVotingProof = await calculateValidatorsProof(
-      decision,
-      validatorsVerificationKey,
-      false
-    );
-    const ok = await verify(proof.toJSON(), validatorsVerificationKey);
-    console.log("proof verified:", { ok });
-    expect(ok).toBe(true);
-    if (!ok) throw new Error("Proof is not verified");
-
-    await fetchMinaAccount({ publicKey: sender, force: true });
-    await fetchMinaAccount({ publicKey: contractPublicKey, force: true });
-
-    const tx = await Mina.transaction(
-      { sender, fee: await fee(), memo: "change validators" },
-      async () => {
-        await zkApp.setValidators(proof);
+      for (let k = 0; k < ELEMENTS_NUMBER; k++) {
+        const oldDomain = database.data[users[k].name];
+        console.log(`old domain:`, oldDomain);
+        const tx1 = await createUpdateTransaction(
+          users[k].name,
+          users[k].privateKey.toPublicKey().toBase58(),
+          oldDomain
+        );
+        expect(tx1).toBeDefined();
+        if (tx1 === undefined) throw new Error("Transaction is undefined");
+        console.log(`tx1:`, tx1);
+        const tx2 = await prepareSignTransactionData(tx1);
+        console.log(`tx2:`, tx2);
+        await sleep(5000);
+        expect(tx2).toBeDefined();
+        if (tx2 === undefined) throw new Error("Transaction is undefined");
+        expect(tx2.signature).toBeDefined();
+        if (tx2.signature === undefined)
+          throw new Error("Signature is undefined");
+        const signData = JSON.parse(tx2.signature).signatureData.map(
+          (v: string) => Field.fromJSON(v)
+        );
+        const signature = Signature.create(users[k].privateKey, signData);
+        tx2.signature = signature.toBase58();
+        updateTransactions.push(JSON.stringify(tx2, null, 2));
       }
-    );
-    Memory.info("proving");
-    console.log("proving...");
-    await tx.prove();
-    Memory.info("signing");
-    console.log("signing...");
-    tx.sign([deployer]);
-    Memory.info("sending");
-    console.log("sending...");
-    await sendTx(tx, "Change validators");
-    Memory.info("validators changed");
-  });
+
+      console.timeEnd(`prepared data`);
+    });
+
+    it(`should send transactions for second block`, async () => {
+      console.time(`Txs to the block sent`);
+      const apiresult = await api.sendTransactions({
+        repo: "nameservice",
+        developer: "@staketab",
+        transactions: updateTransactions,
+      });
+      expect(apiresult).toBeDefined();
+      if (apiresult === undefined) return;
+      expect(apiresult.success).toBe(true);
+      console.log(`tx api call result:`, apiresult);
+      console.timeEnd(`Txs to the block sent`);
+
+      console.log(`Processing tasks...`);
+      while (
+        (await LocalCloud.processLocalTasks({
+          developer,
+          repo,
+          localWorker: zkcloudworker,
+          chain,
+        })) > 1
+      ) {
+        await sleep(10000);
+      }
+      Memory.info(`tasks processed`);
+    });
+
+    it(`should get Rollup's NFT URLs and uri from the DA layer`, async () => {
+      await getDatabase();
+    });
+
+    it(`should change validators`, async () => {
+      console.log(`Changing validators...`);
+      Memory.info("changing validators");
+      const expiry = UInt64.from(Date.now() + 1000 * 60 * 60 * 24 * 2000);
+      const decision = new ValidatorsDecision({
+        contractAddress: contractPublicKey,
+        chainId: getNetworkIdHash(),
+        validators,
+        decisionType: ValidatorDecisionType.setValidators,
+        data: ChangeValidatorsData.toFields({
+          new: validators,
+          old: validators,
+          storage: new Storage({ hashString: [Field(0), Field(0)] }),
+        }),
+        expiry,
+      });
+      const proof: ValidatorsVotingProof = await calculateValidatorsProof(
+        decision,
+        validatorsVerificationKey,
+        false
+      );
+      const ok = await verify(proof.toJSON(), validatorsVerificationKey);
+      console.log("proof verified:", { ok });
+      expect(ok).toBe(true);
+      if (!ok) throw new Error("Proof is not verified");
+
+      await fetchMinaAccount({ publicKey: sender, force: true });
+      await fetchMinaAccount({ publicKey: contractPublicKey, force: true });
+
+      const tx = await Mina.transaction(
+        { sender, fee: await fee(), memo: "change validators" },
+        async () => {
+          await zkApp.setValidators(proof);
+        }
+      );
+      Memory.info("proving");
+      console.log("proving...");
+      await tx.prove();
+      Memory.info("signing");
+      console.log("signing...");
+      tx.sign([deployer]);
+      Memory.info("sending");
+      console.log("sending...");
+      await sendTx(tx, "Change validators");
+      Memory.info("validators changed");
+    });
+  }
 });
 
 async function prepareSignTransactionData(

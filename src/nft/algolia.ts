@@ -96,12 +96,7 @@ async function algoliaWriteTokenHelper(args: {
 
     const result = await index.saveObject(params);
 
-    console.log(
-      "Algolia write result for token",
-      token.username,
-      "is ",
-      result
-    );
+    console.log("Algolia write result for token", name, "is ", result);
 
     return true;
   } catch (error) {

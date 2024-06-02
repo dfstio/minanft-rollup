@@ -77,8 +77,12 @@ import { nameContract } from "./config";
 import { RollupNFTData, createRollupNFT } from "./rollup/rollup-nft";
 import { Metadata } from "minanft";
 import { algoliaWriteToken } from "./nft/algolia";
-import { algoliaWriteBlock } from "./nft";
-import { write } from "fs";
+import { algoliaWriteBlock } from "./nft/blocks";
+import { BlockJson, BlockTransaction } from "./nft/types";
+import {
+  algoliaWriteBlockHistory,
+  algoliaWriteTransactionHistory,
+} from "./nft/history";
 
 const fullValidation = true;
 const proofsOff = false as boolean;
@@ -584,7 +588,8 @@ export class RollupWorker extends zkCloudWorker {
           error: "error: rollupNFT: contractAddress is invalid",
         };
       }
-      const txs: CloudTransaction[] = [];
+      const txs: DomainCloudTransaction[] = [];
+      const blockTransactions: BlockTransaction[] = [];
       for (const tx of transactions) {
         const timeReceived = Date.now();
         const transaction =
@@ -598,13 +603,17 @@ export class RollupWorker extends zkCloudWorker {
         );
         if (transaction !== tx) {
           console.error("Error in transaction", tx);
-          const ct: CloudTransaction = {
+          const ct: DomainCloudTransaction = {
             status: "invalid",
             transaction,
             txId,
             timeReceived,
           };
           txs.push(ct);
+          const bt: BlockTransaction = {
+            tx: ct,
+            name: "invalid",
+          };
         }
         try {
           const txParsed: DomainSerializedTransaction = JSON.parse(
@@ -612,13 +621,20 @@ export class RollupWorker extends zkCloudWorker {
           ) as DomainSerializedTransaction;
           const deserializedTransaction =
             await RollupWorker.deserializeTransaction(txParsed);
-          const ct: CloudTransaction = {
+          const ct: DomainCloudTransaction = {
             status: deserializedTransaction.status,
             transaction,
             txId,
             timeReceived,
           };
           txs.push(ct);
+          const bt: BlockTransaction = {
+            tx: ct,
+            name: deserializedTransaction?.tx
+              ? stringFromFields([deserializedTransaction?.tx.domain.name])
+              : "invalid",
+          };
+          blockTransactions.push(bt);
           if (
             deserializedTransaction.status !== "pending" ||
             deserializedTransaction.tx === undefined
@@ -627,6 +643,14 @@ export class RollupWorker extends zkCloudWorker {
               "Error in deserializing transaction:",
               deserializedTransaction
             );
+            await algoliaWriteTransactionHistory({
+              chain: this.cloud.chain,
+              contractAddress: contractAddress.toBase58(),
+              txId,
+              status: "invalid",
+              reason: "malformed transaction",
+              time: Date.now(),
+            });
           } else {
             const success = await this.sendToAlgolia(
               deserializedTransaction.tx,
@@ -635,18 +659,46 @@ export class RollupWorker extends zkCloudWorker {
             if (!success) {
               console.error("Error in sendToAlgolia");
             }
+            await algoliaWriteTransactionHistory({
+              chain: this.cloud.chain,
+              contractAddress: contractAddress.toBase58(),
+              txId,
+              status: deserializedTransaction.status,
+              reason: deserializedTransaction.reason,
+              time: ct.timeReceived,
+            });
           }
         } catch (error) {
-          const tx: CloudTransaction = {
+          const tx: DomainCloudTransaction = {
             status: "invalid",
             transaction,
             txId,
             timeReceived,
           };
           txs.push(tx);
+          const bt: BlockTransaction = {
+            tx,
+            name: "invalid",
+          };
+          await algoliaWriteTransactionHistory({
+            chain: this.cloud.chain,
+            contractAddress: contractAddress.toBase58(),
+            txId,
+            status: "invalid",
+            reason: "malformed transaction",
+            time: Date.now(),
+          });
         }
       }
-      await this.cloud.sendTransactions(txs);
+      const cloudTxs: CloudTransaction[] = txs.map((tx) => {
+        return {
+          status: tx.status,
+          transaction: tx.transaction,
+          txId: tx.txId,
+          timeReceived: tx.timeReceived,
+        };
+      });
+      await this.cloud.sendTransactions(cloudTxs);
       await this.cloud.execute({
         transactions: [],
         task: "processTransactions",
@@ -656,7 +708,7 @@ export class RollupWorker extends zkCloudWorker {
       await algoliaWriteBlock({
         contractAddress: contractAddress.toBase58(),
         chain: this.cloud.chain,
-        txs,
+        txs: blockTransactions,
       });
       return { success: true, transactions: txs };
     } catch (error) {
@@ -743,7 +795,7 @@ export class RollupWorker extends zkCloudWorker {
       let blockAddress = startBlock;
       let block = new BlockContract(blockAddress, tokenId);
       let blockNumber = Number(block.blockNumber.get().toBigInt());
-      const blocks: {}[] = [];
+      const blocks: BlockJson[] = [];
       while ((count < MAX_BLOCKS || allBlocks) && blockNumber > 0) {
         const root = block.root.get().toJSON();
         const storage = block.storage.get().toIpfsHash();
@@ -759,16 +811,24 @@ export class RollupWorker extends zkCloudWorker {
         blocks.push({
           blockNumber,
           blockAddress: blockAddress.toBase58(),
+          chain: this.cloud.chain,
+          contractAddress: contractAddress.toBase58(),
+          blockProducer: blockProducer.publicKey.toBase58(),
           root,
           ipfs: storage,
           isValidated,
           isInvalid,
           isProved,
           isFinal,
-          timeCreated,
-          txsCount,
+          timeCreated: Number(timeCreated.toBigInt()),
+          txsCount: Number(txsCount.toBigint()),
           txsHash,
           previousBlockAddress: previousBlockAddress.toBase58(),
+          database: "",
+          map: "",
+          oldRoot: "",
+          previousValidBlockAddress: "",
+          invalidTxsCount: 0,
         });
 
         blockAddress = previousBlockAddress;
@@ -783,6 +843,12 @@ export class RollupWorker extends zkCloudWorker {
       }
       if (writeToAlgolia) {
         for (const block of blocks) {
+          const data: BlockJson = await loadFromIPFS(block.ipfs);
+          block.database = data.database;
+          block.map = data.map;
+          block.oldRoot = data.oldRoot;
+          block.invalidTxsCount = data.invalidTxsCount;
+          block.previousValidBlockAddress = data.previousValidBlockAddress;
           await algoliaWriteBlock({
             contractAddress: contractAddress.toBase58(),
             block,
@@ -951,6 +1017,9 @@ export class RollupWorker extends zkCloudWorker {
       if (args.blockAddress === undefined)
         throw new Error("args.blockAddress is undefined");
       if (args.jobId === undefined) throw new Error("args.jobId is undefined");
+      if (args.blockHash === undefined)
+        throw new Error("args.blockHash is undefined");
+      const blockHash: string = args.blockHash;
       const job = await this.cloud.jobResult(args.jobId);
       if (job === undefined) throw new Error("job is undefined");
       if (job.result === undefined) {
@@ -1094,12 +1163,12 @@ export class RollupWorker extends zkCloudWorker {
         tokenId,
         force: true,
       });
-
+      const memo = `block ${blockNumber} is proved`;
       const tx = await Mina.transaction(
         {
           sender,
           fee: await fee(),
-          memo: `MinaNFT: block ${blockNumber} is proved`,
+          memo,
         },
         async () => {
           proofsOff
@@ -1132,6 +1201,16 @@ export class RollupWorker extends zkCloudWorker {
       //console.log("Deleting proveBlock task", this.cloud.taskId);
       console.log(`Block ${blockNumber} is proved`);
       await this.cloud.deleteTask(this.cloud.taskId);
+      await algoliaWriteBlockHistory({
+        chain: this.cloud.chain,
+        contractAddress: contractAddress.toBase58(),
+        blockHash,
+        blockNumber,
+        event: "block proved",
+        txId: txSent.hash,
+        memo,
+        time: Date.now(),
+      });
       console.timeEnd("proveBlock");
       if (this.cloud.isLocalCloud === true) {
         if (this.cloud.chain !== "zeko") {
@@ -1166,12 +1245,16 @@ export class RollupWorker extends zkCloudWorker {
       }
       if (args.blockAddress === undefined)
         throw new Error("args.blockAddress is undefined");
+      if (args.blockHash === undefined)
+        throw new Error("args.blockHash is undefined");
+
       let validated = true;
       let onlyRestartProving = false;
       let decision: ValidatorsDecision | undefined = undefined;
       let proofData: string[] = [];
       const contractAddress = PublicKey.fromBase58(args.contractAddress);
       const blockAddress = PublicKey.fromBase58(args.blockAddress);
+      const blockHash: string = args.blockHash;
       const zkApp = new RollupContract(contractAddress);
       const tokenId = zkApp.deriveTokenId();
       await this.fetchMinaAccount({ publicKey: contractAddress, force: true });
@@ -1306,7 +1389,7 @@ export class RollupWorker extends zkCloudWorker {
         const map = new MerkleMap();
         const blockStorage = block.storage.get();
         const hash = blockStorage.toIpfsHash();
-        const json = await loadFromIPFS(hash);
+        const json: BlockJson = await loadFromIPFS(hash);
         if (json.database === undefined)
           throw new Error("json.database is undefined");
         if (json.database.startsWith("i:") === false)
@@ -1351,10 +1434,12 @@ export class RollupWorker extends zkCloudWorker {
           throw new Error("Invalid blockAddress");
         if (block.root.get().toJSON() !== json.root)
           throw new Error("Invalid block root");
-        if (getNetworkIdHash().toJSON() !== json.chainId)
+        /* TODO: uncomment
+        if (this.cloud.chain !== json.chain)
           throw new Error("Invalid chainId");
-        if (blockParams.txsCount.toBigint().toString() !== json.txsCount)
+        if (Number(blockParams.txsCount.toBigint()) !== json.txsCount)
           throw new Error("Invalid txsCount");
+        */
         if (block.txsHash.get().toJSON() !== json.txsHash)
           throw new Error("Invalid txsHash");
         if (previousBlockAddress.toBase58() !== json.previousBlockAddress)
@@ -1374,7 +1459,9 @@ export class RollupWorker extends zkCloudWorker {
           const previousBlockStorage = previousBlock.storage.get();
           const previousBlockRoot = previousBlock.root.get();
           const previousBlockHash = previousBlockStorage.toIpfsHash();
-          const previousBlockJson = await loadFromIPFS(previousBlockHash);
+          const previousBlockJson: BlockJson = await loadFromIPFS(
+            previousBlockHash
+          );
           //console.log("previousBlockJson map:", previousBlockJson.map);
           if (previousBlockJson.database === undefined)
             throw new Error("previousBlockJson.database is undefined");
@@ -1400,6 +1487,8 @@ export class RollupWorker extends zkCloudWorker {
             throw new Error("Invalid previous block root");
         }
         map.tree = treeFromJSON(mapJson.map);
+        if (json.transactions === undefined)
+          throw new Error("json.transactions is undefined");
 
         const elements: DomainCloudTransactionData[] = json.transactions.map(
           (element: any) => {
@@ -1594,14 +1683,15 @@ export class RollupWorker extends zkCloudWorker {
         }`
       );
       if (validated === false) console.error(`Block ${blockNumber} is invalid`);
+      const memo = validated
+        ? `block ${blockNumber} is valid`
+        : `bad block ${blockNumber}`;
 
       const tx = await Mina.transaction(
         {
           sender,
           fee: await fee(),
-          memo: validated
-            ? `MinaNFT: block ${blockNumber} is valid`
-            : `MinaNFT: bad block ${blockNumber}`,
+          memo,
         },
         async () => {
           validated
@@ -1651,6 +1741,7 @@ export class RollupWorker extends zkCloudWorker {
               contractAddress: args.contractAddress,
               blockAddress: args.blockAddress,
               blockNumber: args.blockNumber,
+              blockHash,
               txHash: txSent.hash,
               jobId,
             },
@@ -1663,6 +1754,18 @@ export class RollupWorker extends zkCloudWorker {
           maxAttempts: 20,
         });
       }
+
+      await algoliaWriteBlockHistory({
+        chain: this.cloud.chain,
+        contractAddress: contractAddress.toBase58(),
+        blockHash,
+        blockNumber,
+        event: "block validated",
+        txId: txSent.hash,
+        memo,
+        time: Date.now(),
+      });
+
       console.timeEnd(`block ${args.blockNumber} validated`);
       if (this.cloud.isLocalCloud === true) {
         if (this.cloud.chain !== "zeko") {
@@ -2056,7 +2159,7 @@ export class RollupWorker extends zkCloudWorker {
       if (blockNumber > 1) {
         const storage = previousBlock.storage.get();
         const hash = storage.toIpfsHash();
-        const json = await loadFromIPFS(hash);
+        const json: BlockJson = await loadFromIPFS(hash);
         if (json.database === undefined)
           throw new Error("json.database is undefined");
         if (json.database.startsWith("i:") === false)
@@ -2071,6 +2174,8 @@ export class RollupWorker extends zkCloudWorker {
         let deletedCount = 0;
         let deletedNames: string[] = [];
         let notFoundNames: string[] = [];
+        if (json.transactions === undefined)
+          throw new Error("json.transactions is undefined");
         console.log(
           `Deleting ${json.transactions.length} transactions from previous block...`
         );
@@ -2252,34 +2357,35 @@ export class RollupWorker extends zkCloudWorker {
       console.timeEnd("database saved to IPFS");
       if (databaseHash === undefined)
         throw new Error("Database hash is undefined");
+      const blockTransactions: BlockTransaction[] = elements.map((element) => {
+        return {
+          name: element.domainData?.tx?.domain?.name
+            ? stringFromFields([element.domainData.tx.domain.name])
+            : undefined,
+          newDomain: element.domainData?.tx?.domain
+            ? serializeFields(
+                RollupNftName.toFields(element.domainData.tx.domain)
+              )
+            : undefined,
+          tx: element.serializedTx,
+          fields: element.domainData?.toJSON(),
+        };
+      });
       const json = {
         blockNumber,
-        timeCreated: time.toBigInt().toString(),
+        timeCreated: Number(time.toBigInt().toString()),
         contractAddress: contractAddress.toBase58(),
         blockAddress: blockPublicKey.toBase58(),
         root: root.toJSON(),
         blockProducer: blockProducer.publicKey.toBase58(),
-        chainId: getNetworkIdHash().toJSON(),
-        txsCount: txsCount.toBigint().toString(),
+        chain: this.cloud.chain,
+        txsCount: Number(txsCount.toBigint()),
         invalidTxsCount: invalidTxsCount,
         txsHash: txsHash.toJSON(),
         previousBlockAddress: previousBlockAddress.toBase58(),
         previousValidBlockAddress: previousValidBlockAddress.toBase58(),
         oldRoot: oldRoot.toJSON(),
-        transactions: elements.map((element) => {
-          return {
-            name: element.domainData?.tx?.domain?.name
-              ? stringFromFields([element.domainData.tx.domain.name])
-              : undefined,
-            newDomain: element.domainData?.tx?.domain
-              ? serializeFields(
-                  RollupNftName.toFields(element.domainData.tx.domain)
-                )
-              : undefined,
-            tx: element.serializedTx,
-            fields: element.domainData?.toJSON(),
-          };
-        }),
+        transactions: blockTransactions,
         database: "i:" + databaseHash,
         map: "i:" + mapHash,
       };
@@ -2307,27 +2413,39 @@ export class RollupWorker extends zkCloudWorker {
         mapHash: "https://gateway.pinata.cloud/ipfs/" + mapHash,
       });
 
-      const block = {
-        blockNumber: json.blockNumber,
-        blockAddress: json.blockAddress,
-        root: json.root,
+      const block: BlockJson = {
+        ...json,
         ipfs: hash,
         isValidated: false,
         isInvalid: false,
         isProved: false,
         isFinal: false,
-        timeCreated: json.timeCreated,
-        txsCount: json.txsCount,
-        txsHash: json.txsHash,
-        previousBlockAddress: json.previousBlockAddress,
       };
 
-      await algoliaWriteBlock({
+      const { success, blockHash } = await algoliaWriteBlock({
         block,
         contractAddress: contractAddress.toBase58(),
         chain: this.cloud.chain,
-        txs: json.transactions.map((tx) => tx.tx),
+        txs: json.transactions,
       });
+      if (success === false) {
+        console.error("Error writing block to algolia", blockHash);
+      }
+      if (blockHash === undefined) {
+        throw new Error("blockHash is undefined");
+      }
+
+      for (const tx of json.transactions) {
+        await algoliaWriteTransactionHistory({
+          chain: this.cloud.chain,
+          contractAddress: contractAddress.toBase58(),
+          txId: tx.tx.txId,
+          status: tx.tx.status,
+          blockNumber: blockNumber,
+          reason: tx.tx.reason,
+          time: Date.now(),
+        });
+      }
 
       const blockStorage = Storage.fromIpfsHash(hash);
       if (
@@ -2443,8 +2561,10 @@ export class RollupWorker extends zkCloudWorker {
       }
 
       console.log(`Sending tx for block ${blockNumber}...`);
-      const memo =
-        `MinaNFT: block ${blockNumber} created: ${count} txs`.substring(0, 30);
+      const memo = `block ${blockNumber} created: ${count} txs`.substring(
+        0,
+        30
+      );
       await this.fetchMinaAccount({
         publicKey: contractAddress,
         force: true,
@@ -2490,11 +2610,6 @@ export class RollupWorker extends zkCloudWorker {
           await sleep(20000);
         }
 
-        await algoliaWriteBlock({
-          block: { txId: txSent.hash, ...block },
-          contractAddress: contractAddress.toBase58(),
-          chain: this.cloud.chain,
-        });
         await this.cloud.addTask({
           args: JSON.stringify(
             {
@@ -2502,6 +2617,7 @@ export class RollupWorker extends zkCloudWorker {
               blockAddress: blockPublicKey.toBase58(),
               txHash: txSent.hash,
               blockNumber,
+              blockHash,
             },
             null,
             2
@@ -2510,6 +2626,17 @@ export class RollupWorker extends zkCloudWorker {
           metadata: `block ${blockNumber} validation`,
           userId: this.cloud.userId,
           maxAttempts: 50,
+        });
+
+        await algoliaWriteBlockHistory({
+          chain: this.cloud.chain,
+          contractAddress: contractAddress.toBase58(),
+          blockHash,
+          blockNumber,
+          event: "block created",
+          txId: txSent.hash,
+          memo,
+          time: Date.now(),
         });
 
         console.timeEnd(`block created`);
