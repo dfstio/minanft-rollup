@@ -1,28 +1,22 @@
 import { describe, expect, it } from "@jest/globals";
 import {
-  PrivateKey,
   setNumberOfWorkers,
   Mina,
-  VerificationKey,
   UInt64,
   PublicKey,
   fetchAccount,
 } from "o1js";
-import { RollupContract } from "../src/contract/domain-contract";
-import { getValidators } from "../src/rollup/validators-proof";
 import { nameContract } from "../src/config";
 import { zkCloudWorkerClient, blockchain, initBlockchain } from "zkcloudworker";
-import { DomainDatabase } from "../src/rollup/database";
 import { zkcloudworker } from ".."; //, setVerificationKey
 import { loadFromIPFS } from "../src/contract/storage";
 import packageJson from "../package.json";
-import { algoliaWriteBlock } from "../src/nft";
+import { algoliaWriteBlock } from "../src/nft/blocks";
+import { BlockJson, BlockTransaction } from "../src/nft/types";
+import { DomainCloudTransaction } from "../src/rollup/transaction";
 const { name: repo, author: developer, version } = packageJson;
 
-setNumberOfWorkers(8);
 const chain: blockchain = "zeko" as blockchain;
-const deploy = true;
-const useLocalCloudWorker = true;
 const api = new zkCloudWorkerClient({
   jwt: "local",
   zkcloudworker,
@@ -51,9 +45,11 @@ describe("Domain Name Service Contract", () => {
     expect(blocks).toBeDefined();
     if (blocks === undefined) throw new Error("Blocks not found");
     // sort blocks by block number
-    blocks.sort((a: any, b: any) => a.blockNumber - b.blockNumber);
+    //blocks.sort((a: any, b: any) => a.blockNumber - b.blockNumber);
     for (const block of blocks) {
-      const txs = await getTransactions(block.ipfs);
+      const { txs, database, map } = await getTransactions(block.ipfs);
+      block.database = database;
+      block.map = map;
       console.log(`Block ${block.blockNumber} transactions:`, txs?.length);
       await algoliaWriteBlock({
         contractAddress: contractPublicKey.toBase58(),
@@ -61,11 +57,12 @@ describe("Domain Name Service Contract", () => {
         block,
         txs,
       });
+      return;
     }
   });
 });
 
-async function getBlocks() {
+async function getBlocks(): Promise<BlockJson[]> {
   const blocks = await api.execute({
     repo,
     task: "getBlocksInfo",
@@ -83,14 +80,25 @@ async function getBlocks() {
   expect(blocks.success).toBe(true);
   expect(blocks.result).toBeDefined();
   let data = JSON.parse(blocks.result);
-  return data?.blocks;
+  return data?.blocks as BlockJson[];
 }
 
-async function getTransactions(ipfs: string) {
+async function getTransactions(ipfs: string): Promise<{
+  txs: BlockTransaction[];
+  database: string;
+  map: string;
+}> {
   expect(ipfs).toBeDefined();
   if (ipfs === undefined) throw new Error("IPFS hash not defined");
   const blockData = await loadFromIPFS(ipfs);
-  return blockData.transactions.map((tx: any) => tx.tx);
+  const txs = blockData.transactions.map(
+    (tx: any) => tx.tx as DomainCloudTransaction
+  );
+  return {
+    txs: blockData.transactions,
+    database: blockData.database.slice(2),
+    map: blockData.map.slice(2),
+  };
   /*
   const databaseIPFS = blockData.database;
   expect(databaseIPFS).toBeDefined();
